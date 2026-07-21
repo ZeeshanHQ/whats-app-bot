@@ -17,17 +17,11 @@ def get_supabase_client() -> Optional[Client]:
 
     if settings.SUPABASE_URL and settings.SUPABASE_KEY:
         try:
-            opts = ClientOptions(postgrest_client_timeout=10)
-            supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY, options=opts)
+            supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
             logger.info(f"Supabase client initialized for: {settings.SUPABASE_URL}")
             return supabase_client
         except Exception as exc:
             logger.error(f"Failed to initialize Supabase client: {exc}")
-            try:
-                supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-                return supabase_client
-            except Exception as exc2:
-                logger.error(f"Secondary Supabase init failed: {exc2}")
 
     return None
 

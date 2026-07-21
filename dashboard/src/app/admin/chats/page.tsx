@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, User, Bot, Radio, Send, RefreshCw, Terminal } from 'lucide-react';
+import { Phone, User, Bot, Radio, Send, RefreshCw, Terminal, Loader2 } from 'lucide-react';
 
 interface ChatLog {
   id: string;
@@ -54,7 +54,13 @@ export default function RealtimeChatsPage() {
         },
         (payload) => {
           const newMsg = payload.new as ChatLog;
-          setMessages((prev) => [...prev, newMsg]);
+          setMessages((prev) => {
+            // Deduplicate if already present optimistically
+            if (prev.some((m) => m.id === newMsg.id || (m.role === newMsg.role && m.content === newMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(newMsg.created_at).getTime()) < 3000))) {
+              return prev;
+            }
+            return [...prev, newMsg];
+          });
 
           if (!activeWaId) {
             setActiveWaId(newMsg.wa_id);
@@ -72,7 +78,7 @@ export default function RealtimeChatsPage() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, activeWaId]);
+  }, [messages, activeWaId, sending]);
 
   const contactsMap: { [key: string]: { lastMsg: string; time: string; count: number } } = {};
   messages.forEach((msg) => {
@@ -98,17 +104,41 @@ export default function RealtimeChatsPage() {
     e.preventDefault();
     if (!testInput.trim() || !activeWaId) return;
 
-    setSending(true);
     const userMsg = testInput.trim();
     setTestInput('');
+    setSending(true);
+
+    // 1. Optimistically append user message instantly to screen
+    const userLog: ChatLog = {
+      id: `user-${Date.now()}`,
+      wa_id: activeWaId,
+      role: 'user',
+      content: userMsg,
+      created_at: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, userLog]);
 
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      await fetch(`${apiUrl}/api/ai/chat`, {
+      const res = await fetch(`${apiUrl}/api/ai/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ wa_id: activeWaId, message: userMsg }),
       });
+
+      const data = await res.json();
+      
+      // 2. Append AI response instantly to screen when returned
+      if (data.ai_reply) {
+        const botLog: ChatLog = {
+          id: `bot-${Date.now()}`,
+          wa_id: activeWaId,
+          role: 'assistant',
+          content: data.ai_reply,
+          created_at: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, botLog]);
+      }
     } catch (err) {
       console.error('Error sending message:', err);
     } finally {
@@ -265,6 +295,24 @@ export default function RealtimeChatsPage() {
                 })}
               </AnimatePresence>
             )}
+
+            {/* AI Generation Loading Indicator */}
+            {sending && (
+              <motion.div
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex justify-start items-center space-x-2"
+              >
+                <div className="w-6 h-6 rounded bg-zinc-800 text-emerald-400 border border-zinc-700 flex items-center justify-center">
+                  <Bot className="w-3 h-3 animate-spin text-emerald-400" strokeWidth={1.5} />
+                </div>
+                <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-400 text-xs font-mono flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                  <span>Astraventa AI is searching vector knowledge base & generating response...</span>
+                </div>
+              </motion.div>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
@@ -274,7 +322,7 @@ export default function RealtimeChatsPage() {
               type="text"
               value={testInput}
               onChange={(e) => setTestInput(e.target.value)}
-              placeholder={activeWaId ? `Send test input for +${activeWaId}...` : 'Select contact session...'}
+              placeholder={activeWaId ? `Send test message as +${activeWaId}...` : 'Select contact session...'}
               disabled={!activeWaId || sending}
               className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 font-sans"
             />

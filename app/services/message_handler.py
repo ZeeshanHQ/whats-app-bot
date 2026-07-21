@@ -112,7 +112,7 @@ async def handle_single_message(message: Message) -> None:
             reply_text = (
                 "📅 *Book a Technical Walkthrough Consultation with Astraventa*\n\n"
                 "We would love to discuss your AI Automation requirements!\n\n"
-                "🔗 *Schedule 15-Min Call*: https://calendly.com/astraventaai/15-min-technical-walkthrough-astraventa?month=2026-07\n"
+                "🔗 *Schedule 15-Min Call*: https://calendly.com/astraventaai/15-min-technical-walkthrough-astraventa\n"
                 "📞 *Direct Phone Line*: +1 925 504 0101"
             )
             await whatsapp_client.send_text_message(to=wa_id, text=reply_text, reply_to_wamid=wamid)

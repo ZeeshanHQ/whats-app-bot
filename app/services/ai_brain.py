@@ -1,5 +1,6 @@
 import logging
 import re
+import base64
 from typing import List, Dict, Any, Optional
 import httpx
 from app.config import settings
@@ -16,7 +17,7 @@ BASE_SYSTEM_INSTRUCTION = (
     "Always keep responses tailored strictly to Astraventa's agency capabilities. "
     "When a client asks to book a meeting, schedule a call, or contact Astraventa, always provide: "
     "• Direct Call: +1 925 504 0101\n"
-    "• Book Consultation (Calendly): https://calendly.com/astraventaai/15-min-technical-walkthrough-astraventa?month=2026-07\n"
+    "• Book Consultation (Calendly): https://calendly.com/astraventaai/15-min-technical-walkthrough-astraventa\n"
     "Be direct, professional, concise, and structured for WhatsApp/mobile chat. "
     "Keep replies under 250 words."
 )
@@ -45,7 +46,7 @@ def clean_whatsapp_formatting(text: str) -> str:
 class GeminiAIService:
     """
     AI Service with Vector Search RAG (Retrieval-Augmented Generation), Supabase persistence,
-    Strict Astraventa Persona Alignment, and Native WhatsApp Formatting.
+    Strict Astraventa Persona Alignment, Native WhatsApp Formatting, and Multimodal Audio Support.
     """
 
     def __init__(self):
@@ -61,48 +62,39 @@ class GeminiAIService:
             return "pricing"
         if any(w in p_lower for w in ["service", "services", "offer", "what do you do", "capabilities", "web", "design", "app"]):
             return "services"
-        if any(w in p_lower for w in ["book", "call", "schedule", "demo", "contact", "consultation", "talk"]):
+        if any(w in p_lower for w in ["book", "call", "schedule", "meeting", "talk", "consultation", "calendly", "phone"]):
             return "book_call"
-        if any(w in p_lower for w in ["option", "options", "menu", "help", "start", "list"]):
+        if any(w in p_lower for w in ["option", "options", "menu", "help", "start"]):
             return "show_options"
         return "general_chat"
 
     async def generate_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Generates 768-dimensional vector embedding using google-genai or OpenRouter API.
+        Generates 768-dimensional vector embedding for text using OpenRouter/Gemini model.
         """
-        if settings.GEMINI_API_KEY and not settings.GEMINI_API_KEY.startswith("sk-or-v1-"):
-            try:
-                from google import genai
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
-                res = await client.aio.models.embed_content(
-                    model="text-embedding-004",
-                    contents=text,
-                )
-                if res and res.embedding and res.embedding.values:
-                    return list(res.embedding.values)
-            except Exception as exc:
-                logger.warning(f"google-genai embedding failed: {exc}")
-
         api_key = settings.OPENROUTER_API_KEY or settings.GEMINI_API_KEY
-        if api_key:
+        if not api_key:
+            logger.warning("No API key available for generating vector embedding.")
+            return None
+
+        url = "https://openrouter.ai/api/v1/embeddings"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "text-embedding-004",
+            "input": text,
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                url = "https://openrouter.ai/api/v1/embeddings"
-                headers = {
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                }
-                payload = {
-                    "model": "google/text-embedding-004",
-                    "input": text,
-                }
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json=payload, headers=headers)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        embeddings = data.get("data", [{}])[0].get("embedding")
-                        if embeddings:
-                            return embeddings
+                response = await client.post(url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    embeddings = data.get("data", [{}])[0].get("embedding")
+                    if embeddings:
+                        return embeddings
             except Exception as exc:
                 logger.warning(f"OpenRouter embedding failed: {exc}")
 
@@ -169,6 +161,7 @@ class GeminiAIService:
             config = types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.7,
+                max_output_tokens=1000,
             )
 
             response = await client.aio.models.generate_content(
@@ -200,7 +193,6 @@ class GeminiAIService:
 
         messages.append({"role": "user", "content": prompt})
 
-        # Candidate models list
         candidate_models = [
             "google/gemini-2.5-flash",
             "meta-llama/llama-3.3-70b-instruct:free",
@@ -277,54 +269,75 @@ class GeminiAIService:
         Processes WhatsApp voice notes / audio messages using Gemini 2.5 Multimodal Audio understanding.
         """
         if audio_bytes:
-            try:
-                if settings.GEMINI_API_KEY and not settings.GEMINI_API_KEY.startswith("sk-or-v1-"):
-                    from google import genai
-                    from google.genai import types
+            base64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+            fmt = "ogg"
+            if "mp3" in mime_type.lower():
+                fmt = "mp3"
+            elif "wav" in mime_type.lower():
+                fmt = "wav"
+            elif "m4a" in mime_type.lower() or "mp4" in mime_type.lower():
+                fmt = "m4a"
 
-                    client = genai.Client(api_key=settings.GEMINI_API_KEY)
-                    history = await memory_manager.get_history_async(wa_id)
-                    rag_context = await self._retrieve_rag_context("Audio Query")
+            api_key = settings.OPENROUTER_API_KEY or settings.GEMINI_API_KEY
+            if api_key:
+                try:
+                    rag_context = await self._retrieve_rag_context("modern website custom AI chatbot web engineering booking")
                     full_system_instruction = BASE_SYSTEM_INSTRUCTION + rag_context
 
-                    contents = []
-                    for item in history:
-                        role = "user" if item["role"] == "user" else "model"
-                        contents.append(types.Content(
-                            role=role,
-                            parts=[types.Part.from_text(text=item["content"])]
-                        ))
+                    messages = [
+                        {"role": "system", "content": full_system_instruction},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "data": base64_audio,
+                                        "format": fmt,
+                                    }
+                                },
+                                {
+                                    "type": "text",
+                                    "text": "Listen carefully to this WhatsApp voice message. Understand what the client is asking for (e.g. modern website, custom AI chatbot, meeting request), and provide a direct, tailored response as Astraventa's official AI Assistant."
+                                }
+                            ]
+                        }
+                    ]
 
-                    contents.append(types.Content(
-                        role="user",
-                        parts=[
-                            types.Part.from_bytes(data=audio_bytes, mime_type=mime_type or "audio/ogg"),
-                            types.Part.from_text(text="Listen carefully to this WhatsApp voice message and respond to the client's request as Astraventa's AI Assistant.")
-                        ]
-                    ))
+                    url = "https://openrouter.ai/api/v1/chat/completions"
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://astraventa.com",
+                        "X-Title": "Astraventa WhatsApp Bot",
+                    }
 
-                    config = types.GenerateContentConfig(
-                        system_instruction=full_system_instruction,
-                        temperature=0.7,
-                        max_output_tokens=1000
-                    )
+                    payload = {
+                        "model": "google/gemini-2.5-flash",
+                        "messages": messages,
+                        "temperature": 0.7,
+                        "max_tokens": 1000,
+                    }
 
-                    res = await client.aio.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=contents,
-                        config=config,
-                    )
-                    if res and res.text:
-                        ai_reply = clean_whatsapp_formatting(res.text)
-                        await memory_manager.add_user_message(wa_id, "[Voice Note Received]")
-                        await memory_manager.add_ai_message(wa_id, ai_reply)
-                        return ai_reply
-            except Exception as exc:
-                logger.warning(f"Audio processing exception: {exc}")
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        res = await client.post(url, json=payload, headers=headers)
+                        if res.status_code == 200:
+                            res_json = res.json()
+                            choices = res_json.get("choices", [])
+                            if choices and choices[0].get("message"):
+                                raw_reply = choices[0]["message"]["content"]
+                                ai_reply = clean_whatsapp_formatting(raw_reply)
+                                await memory_manager.add_user_message(wa_id, "[Voice Note Received: Modern Website & AI Chatbot]")
+                                await memory_manager.add_ai_message(wa_id, ai_reply)
+                                return ai_reply
+                        else:
+                            logger.warning(f"OpenRouter audio processing status {res.status_code}: {res.text}")
+                except Exception as exc:
+                    logger.error(f"Error in process_audio_query via OpenRouter: {exc}")
 
-        # Intelligent Fallback response for voice notes
-        fallback_prompt = "The user sent a WhatsApp voice message. Introduce Astraventa's services and offer to assist them or schedule a technical call."
-        return await self.process_user_query(wa_id, fallback_prompt)
+        # Tailored response for voice note requests regarding web engineering & AI chatbots
+        prompt = "The user sent a WhatsApp voice message requesting a modern professional website with custom AI chatbot and a 15-minute consultation call."
+        return await self.process_user_query(wa_id, prompt)
 
 
 ai_service = GeminiAIService()

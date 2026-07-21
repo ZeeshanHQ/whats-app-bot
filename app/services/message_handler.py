@@ -5,6 +5,9 @@ from app.services.ai_brain import ai_service
 
 logger = logging.getLogger("message_handler")
 
+# Set to store recently processed Meta Message IDs to prevent duplicate webhook processing
+PROCESSED_WAMIDS = set()
+
 
 async def process_webhook_payload(payload: WebhookPayload) -> None:
     """
@@ -38,10 +41,21 @@ async def handle_single_message(message: Message) -> None:
     """
     Handles an individual message item extracted from the webhook.
     Routes user text & interactive button/list selections to appropriate handlers.
+    Includes strict deduplication by Meta Message ID (wamid).
     """
     wa_id = message.from_wa_id
     wamid = message.id
     msg_type = message.type
+
+    # 1. Deduplication Guard: Ignore duplicate Meta webhooks for the same message ID
+    if wamid and wamid in PROCESSED_WAMIDS:
+        logger.info(f"Duplicate Meta Message ID '{wamid}' detected. Skipping duplicate processing.")
+        return
+
+    if wamid:
+        PROCESSED_WAMIDS.add(wamid)
+        if len(PROCESSED_WAMIDS) > 5000:
+            PROCESSED_WAMIDS.clear()
 
     logger.info(f"Processing message ID: {wamid} from wa_id: {wa_id} (type: {msg_type})")
 
@@ -64,7 +78,6 @@ async def handle_single_message(message: Message) -> None:
             prompt = "What are the Astraventa WhatsApp Automation pricing packages and costs?"
             ai_reply = await ai_service.process_user_query(wa_id=wa_id, prompt=prompt)
             
-            # Follow up with interactive action buttons
             buttons = [
                 {"id": "btn_book_call", "title": "Book a Call"},
                 {"id": "btn_services", "title": "View Services"},
@@ -97,17 +110,15 @@ async def handle_single_message(message: Message) -> None:
 
         elif btn_id == "btn_book_call":
             reply_text = (
-                "📅 **Book a Consultation Call with Astraventa**\n\n"
+                "📅 *Book a Technical Walkthrough Consultation with Astraventa*\n\n"
                 "We would love to discuss your AI Automation requirements!\n\n"
-                "🔗 Schedule a 15-min call: https://astraventa.com/book\n"
-                "📧 Email: contact@astraventa.com\n"
-                "📞 Direct WhatsApp: +1 (555) 153-2305"
+                "🔗 *Schedule 15-Min Call*: https://calendly.com/astraventaai/15-min-technical-walkthrough-astraventa?month=2026-07\n"
+                "📞 *Direct Phone Line*: +1 925 504 0101"
             )
             await whatsapp_client.send_text_message(to=wa_id, text=reply_text, reply_to_wamid=wamid)
             return
 
         else:
-            # Custom interactive button fallback
             prompt = f"User selected option: {btn_title}"
             ai_reply = await ai_service.process_user_query(wa_id=wa_id, prompt=prompt)
             await whatsapp_client.send_text_message(to=wa_id, text=ai_reply, reply_to_wamid=wamid)
@@ -137,8 +148,7 @@ async def handle_single_message(message: Message) -> None:
                     header_text="Astraventa Assistant",
                     footer_text="Select an option below",
                 )
-                if res.get("error"):
-                    # Fallback to plain text if interactive button failed
+                if isinstance(res, dict) and res.get("error"):
                     await whatsapp_client.send_text_message(to=wa_id, text=ai_reply, reply_to_wamid=wamid)
             except Exception as exc:
                 logger.error(f"Failed to send interactive buttons: {exc}. Falling back to plain text.")
@@ -154,7 +164,6 @@ async def handle_single_message(message: Message) -> None:
         )
 
     else:
-        # Handle media, location, sticker, or other message types
         prompt = f"[User sent a {msg_type} message]"
         ai_reply = await ai_service.process_user_query(wa_id=wa_id, prompt=prompt)
         await whatsapp_client.send_text_message(

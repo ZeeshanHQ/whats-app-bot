@@ -179,5 +179,22 @@ class WhatsAppClient:
 
         return await self._post(payload)
 
+    async def download_media(self, media_id: str) -> Optional[bytes]:
+        """Downloads raw media file bytes from Meta Cloud API by media_id."""
+        try:
+            url = f"https://graph.facebook.com/{self.api_version}/{media_id}"
+            headers = {"Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}"}
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res = await client.get(url, headers=headers)
+                if res.status_code == 200:
+                    media_url = res.json().get("url")
+                    if media_url:
+                        media_res = await client.get(media_url, headers=headers)
+                        if media_res.status_code == 200:
+                            return media_res.content
+        except Exception as exc:
+            logger.error(f"Error downloading media {media_id}: {exc}")
+        return None
+
 
 whatsapp_client = WhatsAppClient()

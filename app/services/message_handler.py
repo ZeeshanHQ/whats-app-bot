@@ -163,6 +163,24 @@ async def handle_single_message(message: Message) -> None:
             reply_to_wamid=wamid,
         )
 
+    # Handle Audio / Voice Notes
+    elif (msg_type == "audio" or msg_type == "voice") and message.audio:
+        logger.info(f"Received WhatsApp audio voice note from {wa_id} (media_id: {message.audio.id})")
+        audio_bytes = None
+        if message.audio.id:
+            audio_bytes = await whatsapp_client.download_media(message.audio.id)
+
+        ai_reply = await ai_service.process_audio_query(
+            wa_id=wa_id,
+            audio_bytes=audio_bytes,
+            mime_type=message.audio.mime_type or "audio/ogg",
+        )
+        await whatsapp_client.send_text_message(
+            to=wa_id,
+            text=ai_reply,
+            reply_to_wamid=wamid,
+        )
+
     else:
         prompt = f"[User sent a {msg_type} message]"
         ai_reply = await ai_service.process_user_query(wa_id=wa_id, prompt=prompt)

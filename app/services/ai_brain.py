@@ -272,5 +272,59 @@ class GeminiAIService:
             )
             return fallback_msg
 
+    async def process_audio_query(self, wa_id: str, audio_bytes: Optional[bytes], mime_type: str = "audio/ogg") -> str:
+        """
+        Processes WhatsApp voice notes / audio messages using Gemini 2.5 Multimodal Audio understanding.
+        """
+        if audio_bytes:
+            try:
+                if settings.GEMINI_API_KEY and not settings.GEMINI_API_KEY.startswith("sk-or-v1-"):
+                    from google import genai
+                    from google.genai import types
+
+                    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                    history = await memory_manager.get_history_async(wa_id)
+                    rag_context = await self._retrieve_rag_context("Audio Query")
+                    full_system_instruction = BASE_SYSTEM_INSTRUCTION + rag_context
+
+                    contents = []
+                    for item in history:
+                        role = "user" if item["role"] == "user" else "model"
+                        contents.append(types.Content(
+                            role=role,
+                            parts=[types.Part.from_text(text=item["content"])]
+                        ))
+
+                    contents.append(types.Content(
+                        role="user",
+                        parts=[
+                            types.Part.from_bytes(data=audio_bytes, mime_type=mime_type or "audio/ogg"),
+                            types.Part.from_text(text="Listen carefully to this WhatsApp voice message and respond to the client's request as Astraventa's AI Assistant.")
+                        ]
+                    ))
+
+                    config = types.GenerateContentConfig(
+                        system_instruction=full_system_instruction,
+                        temperature=0.7,
+                        max_output_tokens=1000
+                    )
+
+                    res = await client.aio.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=contents,
+                        config=config,
+                    )
+                    if res and res.text:
+                        ai_reply = clean_whatsapp_formatting(res.text)
+                        await memory_manager.add_user_message(wa_id, "[Voice Note Received]")
+                        await memory_manager.add_ai_message(wa_id, ai_reply)
+                        return ai_reply
+            except Exception as exc:
+                logger.warning(f"Audio processing exception: {exc}")
+
+        # Intelligent Fallback response for voice notes
+        fallback_prompt = "The user sent a WhatsApp voice message. Introduce Astraventa's services and offer to assist them or schedule a technical call."
+        return await self.process_user_query(wa_id, fallback_prompt)
+
 
 ai_service = GeminiAIService()

@@ -220,6 +220,7 @@ class GeminiAIService:
                         "model": model_name,
                         "messages": messages,
                         "temperature": 0.7,
+                        "max_tokens": 1000,
                     }
                     response = await client.post(url, json=payload, headers=headers)
                     res_json = response.json()

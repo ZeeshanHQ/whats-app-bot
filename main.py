@@ -80,13 +80,15 @@ class TextSendRequest(BaseModel):
 @app.post("/api/send-text", tags=["Outbound"])
 async def send_text_endpoint(req: TextSendRequest):
     """
-    Outbound client helper endpoint to send plain text messages.
+    Outbound client helper endpoint to send plain text messages directly to customer's WhatsApp phone.
     """
     try:
+        from app.services.db import save_chat_message
         response = await whatsapp_client.send_text_message(
             to=req.to,
             text=req.text,
         )
+        await save_chat_message(wa_id=req.to, role="assistant", content=req.text)
         return response
     except Exception as exc:
         logger.error(f"Failed to send text message: {exc}")

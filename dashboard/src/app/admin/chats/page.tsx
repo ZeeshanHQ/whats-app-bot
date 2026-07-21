@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Phone, User, Bot, Radio, Send, RefreshCw, Terminal, Loader2 } from 'lucide-react';
+import { Phone, User, Bot, Radio, Send, RefreshCw, Terminal, Loader2, MessageSquare, ShieldCheck } from 'lucide-react';
 
 interface ChatLog {
   id: string;
@@ -19,6 +19,7 @@ export default function RealtimeChatsPage() {
   const [loading, setLoading] = useState(true);
   const [testInput, setTestInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [directToWA, setDirectToWA] = useState(false); // Mode: AI Simulation vs Direct Outbound WhatsApp Handoff
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const fetchLogs = async () => {
@@ -55,7 +56,6 @@ export default function RealtimeChatsPage() {
         (payload) => {
           const newMsg = payload.new as ChatLog;
           setMessages((prev) => {
-            // Deduplicate if already present optimistically
             if (prev.some((m) => m.id === newMsg.id || (m.role === newMsg.role && m.content === newMsg.content && Math.abs(new Date(m.created_at).getTime() - new Date(newMsg.created_at).getTime()) < 3000))) {
               return prev;
             }
@@ -108,41 +108,66 @@ export default function RealtimeChatsPage() {
     setTestInput('');
     setSending(true);
 
-    // 1. Optimistically append user message instantly to screen
-    const userLog: ChatLog = {
-      id: `user-${Date.now()}`,
-      wa_id: activeWaId,
-      role: 'user',
-      content: userMsg,
-      created_at: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, userLog]);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const res = await fetch(`${apiUrl}/api/ai/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wa_id: activeWaId, message: userMsg }),
-      });
-
-      const data = await res.json();
-      
-      // 2. Append AI response instantly to screen when returned
-      if (data.ai_reply) {
-        const botLog: ChatLog = {
-          id: `bot-${Date.now()}`,
-          wa_id: activeWaId,
-          role: 'assistant',
-          content: data.ai_reply,
-          created_at: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, botLog]);
+    if (directToWA) {
+      // MODE: Human-in-the-Loop Direct WhatsApp Outbound Message
+      try {
+        const res = await fetch(`${apiUrl}/api/send-text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: activeWaId, text: userMsg }),
+        });
+        if (res.ok) {
+          const humanLog: ChatLog = {
+            id: `human-${Date.now()}`,
+            wa_id: activeWaId,
+            role: 'assistant',
+            content: userMsg,
+            created_at: new Date().toISOString(),
+          };
+          setMessages((prev) => [...prev, humanLog]);
+        }
+      } catch (err) {
+        console.error('Error sending direct WhatsApp message:', err);
+      } finally {
+        setSending(false);
       }
-    } catch (err) {
-      console.error('Error sending message:', err);
-    } finally {
-      setSending(false);
+    } else {
+      // MODE: AI Engine Test Simulation
+      const userLog: ChatLog = {
+        id: `user-${Date.now()}`,
+        wa_id: activeWaId,
+        role: 'user',
+        content: userMsg,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, userLog]);
+
+      try {
+        const res = await fetch(`${apiUrl}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wa_id: activeWaId, message: userMsg }),
+        });
+
+        const data = await res.json();
+        
+        if (data.ai_reply) {
+          const botLog: ChatLog = {
+            id: `bot-${Date.now()}`,
+            wa_id: activeWaId,
+            role: 'assistant',
+            content: data.ai_reply,
+            created_at: new Date().toISOString(),
+          };
+          setMessages((prev) => [...prev, botLog]);
+        }
+      } catch (err) {
+        console.error('Error sending AI chat message:', err);
+      } finally {
+        setSending(false);
+      }
     }
   };
 
@@ -238,9 +263,32 @@ export default function RealtimeChatsPage() {
                 {activeWaId ? `+${activeWaId}` : 'Select contact'}
               </span>
             </div>
-            <span className="text-[10px] text-zinc-400 font-mono">
-              {activeThread.length} turns
-            </span>
+
+            {/* Mode Switcher: AI Engine vs Direct Human Handoff */}
+            <div className="flex items-center space-x-2 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setDirectToWA(false)}
+                className={`px-2 py-0.5 rounded border transition-colors ${
+                  !directToWA
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold'
+                    : 'bg-zinc-900 text-zinc-400 border-zinc-800'
+                }`}
+              >
+                AI Simulation
+              </button>
+              <button
+                type="button"
+                onClick={() => setDirectToWA(true)}
+                className={`px-2 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+                  directToWA
+                    ? 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 font-bold'
+                    : 'bg-zinc-900 text-zinc-400 border-zinc-800'
+                }`}
+              >
+                <ShieldCheck className="w-2.5 h-2.5" /> Direct to WhatsApp Phone
+              </button>
+            </div>
           </div>
 
           {/* Stream Feed */}
@@ -297,7 +345,7 @@ export default function RealtimeChatsPage() {
             )}
 
             {/* AI Generation Loading Indicator */}
-            {sending && (
+            {sending && !directToWA && (
               <motion.div
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -316,23 +364,33 @@ export default function RealtimeChatsPage() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Test Input Form */}
+          {/* Test / Human Handoff Input Form */}
           <form onSubmit={handleSendMessage} className="p-2.5 bg-zinc-950 border-t border-zinc-800 flex gap-2">
             <input
               type="text"
               value={testInput}
               onChange={(e) => setTestInput(e.target.value)}
-              placeholder={activeWaId ? `Send test message as +${activeWaId}...` : 'Select contact session...'}
+              placeholder={
+                directToWA
+                  ? `Send Human-in-the-Loop WhatsApp message to +${activeWaId}...`
+                  : `Send test message as +${activeWaId}...`
+              }
               disabled={!activeWaId || sending}
-              className="flex-1 bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500/50 font-sans"
+              className={`flex-1 bg-zinc-900 border rounded-md px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none font-sans ${
+                directToWA ? 'border-cyan-500/50 focus:border-cyan-400' : 'border-zinc-800 focus:border-emerald-500/50'
+              }`}
             />
             <button
               type="submit"
               disabled={!activeWaId || sending || !testInput.trim()}
-              className="px-3.5 py-1.5 rounded-md bg-emerald-500 text-black font-semibold text-xs disabled:opacity-50 hover:bg-emerald-400 transition-colors flex items-center gap-1 font-mono"
+              className={`px-3.5 py-1.5 rounded-md font-semibold text-xs disabled:opacity-50 transition-colors flex items-center gap-1 font-mono ${
+                directToWA
+                  ? 'bg-cyan-500 hover:bg-cyan-400 text-black'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+              }`}
             >
               <Send className="w-3 h-3" strokeWidth={1.5} />
-              <span>{sending ? 'Sending...' : 'Test'}</span>
+              <span>{sending ? 'Sending...' : directToWA ? 'Send WhatsApp' : 'Test'}</span>
             </button>
           </form>
         </div>

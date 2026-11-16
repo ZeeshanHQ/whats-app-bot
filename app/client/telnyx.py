@@ -21,7 +21,7 @@ class TelnyxClient:
 
     async def _post(self, path: str, payload: dict = None) -> dict:
         """Internal helper to execute POST request to Telnyx API."""
-        url = f"{self.base_url}/{path}"
+        url = f"{self.base_url}/{path}" if path else self.base_url
         if not self.api_key:
             logger.error("TELNYX_API_KEY is not configured in settings.")
             return {"error": "Missing Telnyx API Key"}
@@ -39,6 +39,32 @@ class TelnyxClient:
         except Exception as exc:
             logger.error(f"Telnyx API Request failed: {exc}", exc_info=True)
             return {"error": str(exc)}
+
+    async def dial_outbound_call(
+        self,
+        to_number: str,
+        from_number: str = None,
+        client_state: str = None,
+    ) -> dict:
+        """
+        Initiates an outbound call via Telnyx Call Control API (v2).
+        POST https://api.telnyx.com/v2/calls
+        """
+        from_num = from_number or settings.TELNYX_PHONE_NUMBER or "+19255040101"
+        domain = settings.SERVER_DOMAIN or "api.engine.astraventa.com"
+        webhook_url = f"https://{domain}/webhook/voice"
+
+        payload = {
+            "to": to_number,
+            "from": from_num,
+            "connection_id": settings.TELNYX_CONNECTION_ID or "3011985982435100116",
+            "webhook_url": webhook_url,
+        }
+        if client_state:
+            payload["client_state"] = client_state
+
+        logger.info(f"Initiating outbound Telnyx call: from={from_num} to={to_number} connection={payload['connection_id']}")
+        return await self._post("", payload)
 
     async def answer_call(self, call_control_id: str) -> dict:
         """Answer an incoming call."""

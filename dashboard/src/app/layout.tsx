@@ -100,17 +100,17 @@ export default function RootLayout({
                         </span>
                       </Link>
 
-                      {/* Inbound Call Logs */}
+                      {/* Voice Calls (Inbound & Outbound) */}
                       <Link
                         href="/admin/calls"
                         className="flex items-center justify-between px-3 py-2 rounded-lg text-[13px] font-medium text-emerald-300 hover:text-white hover:bg-emerald-500/10 transition-all group border border-emerald-500/20 bg-emerald-500/5 shadow-sm"
                       >
                         <div className="flex items-center space-x-2.5">
                           <PhoneCall className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
-                          <span className="font-semibold text-white">Inbound Calls</span>
+                          <span className="font-semibold text-white">Voice Calls & Dialer</span>
                         </div>
                         <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold">
-                          Live
+                          In/Out
                         </span>
                       </Link>
 

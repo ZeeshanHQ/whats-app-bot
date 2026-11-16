@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     TELNYX_API_KEY: str = ""
+    TELNYX_CONNECTION_ID: str = "3011985982435100116"
+    TELNYX_PHONE_NUMBER: str = "+19255040101"
     DEEPGRAM_API_KEY: str = ""
     FORWARDING_TARGET: str = ""
 

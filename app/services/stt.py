@@ -103,7 +103,7 @@ class DeepgramLiveClient:
                             self.on_transcript(transcript, final_flag)
 
                 except Exception as inner_err:
-                    logger.debug(f"Deepgram message parse notice: {inner_err}")
+                    logger.error(f"Error handling Deepgram transcript: {inner_err}", exc_info=True)
                     continue
 
         except websockets.exceptions.ConnectionClosed:
